@@ -42,4 +42,6 @@ I use this on Ubuntu with Sonicwall NetExtender. If you would like to adapt it
 to run on other operating systems and with other VPN clients then I will
 welcome your PR.
 
-I currently don't have any tests - honestly, it is
+I currently don't have any tests - honestly, it is trivial and I have been using
+it for a while so I don't anticipate any problems. If problems turn up, tests
+will be added around fixes :-)
