@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"io"
 	"bufio"
 	"fmt"
 	"net"
@@ -47,15 +48,23 @@ func start() (*exec.Cmd, error) {
 
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return nil, errors.Wrap(err, "stdout pipe error")
+		return nil, errors.Wrap(err, "couldn't get stdout pipe")
+	}
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't get stderr pipe")
 	}
 	if err := command.Start(); err != nil {
 		return nil, errors.Wrap(err, "netExtender command failed")
 	}
 
-	scanner := bufio.NewScanner(stdout)
+	merged_output := io.MultiReader(stderr, stdout)
+	scanner := bufio.NewScanner(merged_output)
 	for scanner.Scan() {
-		fmt.Println(scanner.Text())
+		fmt.Println("[netExtender] ", scanner.Text())
+		if strings.HasPrefix(scanner.Text(), "Another NetExtender instance is already running") {
+			return nil, errors.New("NetExtender already running; please kill it and try again.")
+		}
 		if strings.HasPrefix(scanner.Text(), "NetExtender connected successfully") {
 			return command, nil
 		}
