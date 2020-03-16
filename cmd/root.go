@@ -45,8 +45,10 @@ var RootCmd = &cobra.Command{
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	if err := RootCmd.Execute(); err != nil {
-		fmt.Printf("%+v\n", err)
-		os.Exit(1)
+		if debug {
+			fmt.Printf("%+v\n", err)
+		}
+		log.Fatal(err)
 	}
 }
 
@@ -70,8 +72,7 @@ func initConfig() {
 		// Find home directory.
 		home, err := homedir.Dir()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			log.Fatal(err)
 		}
 
 		// Search config in home directory with name ".revpn" (without extension).
@@ -83,9 +84,8 @@ func initConfig() {
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
+		log.Info("Using config file:", viper.ConfigFileUsed())
 	} else {
-		fmt.Println("Error loading config ", viper.ConfigFileUsed(), ": ", err)
-		os.Exit(1)
+		log.Fatal("Error loading config ", viper.ConfigFileUsed(), ": ", err)
 	}
 }
