@@ -3,6 +3,7 @@ package cmd
 import (
 	"io"
 	"bufio"
+	"bytes"
 	"fmt"
 	"net"
 	"os/exec"
@@ -37,6 +38,46 @@ func routedIPs() ([]string, error) {
 	return ips, nil
 }
 
+// https://golang.org/src/bufio/scan.go?s=11802:11880#L335
+// dropCR drops a terminal \r from the data.
+func dropCR(data []byte) []byte {
+
+	if len(data) > 0 && data[len(data)-1] == '\r' {
+
+		return data[0 : len(data)-1]
+
+	}
+
+	return data
+
+}
+
+func ScanPrompt(data []byte, atEOF bool) (advance int, token []byte, err error) {
+
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		// We have a full newline-terminated line.
+		return i + 1, dropCR(data[0:i]), nil
+	}
+
+	if i := bytes.Index(data, []byte(": ")); i >= 0 {
+		// We have a prompt - keep the ':'.
+		return i + 1, dropCR(data[0:i+2]), nil
+	}
+
+	// If we're at EOF, we have a final, non-terminated line. Return it.
+	if atEOF {
+		return len(data), dropCR(data), nil
+	}
+
+	// Request more data.
+	return 0, nil, nil
+
+}
+
 func start() (*exec.Cmd, error) {
 	command := exec.Command(
 		viper.GetString("netExtender"),
@@ -44,8 +85,13 @@ func start() (*exec.Cmd, error) {
 		"-p", viper.GetString("password"),
 		"-d", viper.GetString("domain"),
 		"--dns-only-local",
-		viper.GetString("vpn_host"))
+		viper.GetString("vpn_host"),
+	)
 
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't get stdin pipe")
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return nil, errors.Wrap(err, "couldn't get stdout pipe")
@@ -58,15 +104,28 @@ func start() (*exec.Cmd, error) {
 		return nil, errors.Wrap(err, "netExtender command failed")
 	}
 
-	merged_output := io.MultiReader(stderr, stdout)
+	merged_output := io.MultiReader(stdout, stderr)
 	scanner := bufio.NewScanner(merged_output)
+	scanner.Split(ScanPrompt)
+	writer := bufio.NewWriter(stdin)
 	for scanner.Scan() {
-		fmt.Println("[netExtender] ", scanner.Text())
-		if strings.HasPrefix(scanner.Text(), "Another NetExtender instance is already running") {
+		// Not sure why these writes are needed, but without we get a lock-up
+		writer.WriteString("\n")
+		writer.Flush()
+		text := scanner.Text()
+		fmt.Println("[netExtender] ", text)
+		if strings.HasPrefix(scanner.Text(), "Do you want to proceed? (Y:Yes, N:No, V:View Certificate)") {
+			writer.WriteString("Y")
+			writer.Flush()
+		}
+		if strings.HasPrefix(text, "Another NetExtender instance is already running") {
 			return nil, errors.New("NetExtender already running; please kill it and try again.")
 		}
-		if strings.HasPrefix(scanner.Text(), "NetExtender connected successfully") {
+		if strings.HasPrefix(text, "NetExtender connected successfully") {
 			return command, nil
+		}
+		if strings.HasSuffix(text, ": ") {
+			return nil, errors.New("Interactive prompt asking for " + text[:len(text) - 1])
 		}
 	}
 
