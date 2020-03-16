@@ -2,13 +2,15 @@ package cmd
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
@@ -49,19 +51,49 @@ func start() (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
+	cmdIn, err := command.StdinPipe()
+	if err != nil {
+		log.Fatal("Unable to open stdin to VPN command")
+	}
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
 
+	stdin := bufio.NewScanner(os.Stdin)
+
 	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		fmt.Println(scanner.Text())
-		if strings.HasPrefix(scanner.Text(), "NetExtender connected successfully") {
-			return command, nil
+	lines := make(chan string, 2)
+	go func() {
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+	}()
+
+	var line string
+
+	for {
+		select {
+		case line = <-lines:
+			fmt.Println(line)
+			if strings.HasPrefix(line, "Do you want to proceed? (Y:Yes, N:No, V:View Certificate)") {
+				stdin.Scan()
+				input := stdin.Text()
+				fmt.Println(input)
+				if _, err := io.WriteString(cmdIn, input); err != nil {
+					return nil, errors.Wrap(err, "Unable to write to command")
+				}
+			}
+
+			if strings.HasPrefix(line, "NetExtender connected successfully") {
+				return command, nil
+			}
+
+		case <-time.After(time.Millisecond * 10):
+			if _, err := cmdIn.Write([]byte("\n")); err != nil {
+				return nil, errors.Wrap(err, "Unable to poke netExtender into life")
+			}
 		}
 	}
-
-	return nil, errors.New("unable to connect VPN")
 }
 
 func gateway() string {
