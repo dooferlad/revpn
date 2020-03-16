@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"net"
 	"os/exec"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 
 	"github.com/dooferlad/jat/cmd"
@@ -22,7 +22,7 @@ func routedIPs() ([]string, error) {
 
 		i, err := net.LookupIP(host)
 		if err != nil {
-			return ips, err
+			return ips, errors.Wrap(err, "IP lookup failed")
 		}
 		for _, ip := range i {
 			ips = append(ips, ip.String())
@@ -47,10 +47,10 @@ func start() (*exec.Cmd, error) {
 
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "stdout pipe error")
 	}
 	if err := command.Start(); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "netExtender command failed")
 	}
 
 	scanner := bufio.NewScanner(stdout)
