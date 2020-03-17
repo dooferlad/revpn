@@ -84,5 +84,8 @@ func initConfig() {
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Println("Using config file:", viper.ConfigFileUsed())
+	} else if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		// If we get any sort of error that isn't a not found error, log it
+		log.Fatal("Error loading config ", viper.ConfigFileUsed(), ": ", err)
 	}
 }
