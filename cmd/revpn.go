@@ -39,13 +39,18 @@ func routedIPs() ([]string, error) {
 }
 
 func start() (*exec.Cmd, error) {
-	command := exec.Command(
-		viper.GetString("netExtender"),
-		"-u", viper.GetString("vpnuser"),
-		"-p", viper.GetString("password"),
-		"-d", viper.GetString("domain"),
-		"--dns-only-local",
-		viper.GetString("vpn_host"))
+	var command *exec.Cmd
+	if viper.GetString("vpnScript") != "" {
+		command = exec.Command(viper.GetString("vpnScript"))
+	} else {
+		command = exec.Command(
+			viper.GetString("netExtender"),
+			"-u", viper.GetString("vpnuser"),
+			"-p", viper.GetString("password"),
+			"-d", viper.GetString("domain"),
+			"--dns-only-local",
+			viper.GetString("vpn_host"))
+	}
 
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -84,19 +89,20 @@ func start() (*exec.Cmd, error) {
 				}
 			}
 
+			// Netextender has connected
 			if strings.HasPrefix(line, "NetExtender connected successfully") {
 				return command, nil
 			}
 
-		case <-time.After(time.Millisecond * 10):
-			if _, err := cmdIn.Write([]byte("\n")); err != nil {
-				return nil, errors.Wrap(err, "Unable to poke netExtender into life")
+			// openconnect has connected
+			if strings.HasPrefix(line, "Connected as") {
+				return command, nil
 			}
 		}
 	}
 }
 
-func gateway() string {
+func gateway() (string, bool, string, error) {
 	command := exec.Command("ip", "route")
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -108,15 +114,23 @@ func gateway() string {
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
-		if strings.HasPrefix(scanner.Text(), "default via") {
-			return strings.Split(scanner.Text(), " ")[2]
+		fields := strings.Fields(scanner.Text())
+		fmt.Printf("%#v\n", fields)
+		if fields[0] == "default" {
+			if fields[1] == "via" {
+				return fields[2], false, fields[4], nil
+			}
+
+			if fields[1] == "dev" {
+				return fields[2], true, fields[2], nil
+			}
 		}
 	}
 
-	return ""
+	return "", false, "", fmt.Errorf("unable to find default route")
 }
 
-func ppp0Routes() []string {
+func deviceRoutes(device string) []string {
 	command := exec.Command("ip", "route")
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -128,9 +142,12 @@ func ppp0Routes() []string {
 
 	scanner := bufio.NewScanner(stdout)
 	var routes []string
+	searchString := "dev " + device
+
 	for scanner.Scan() {
 		line := strings.Trim(scanner.Text(), " \n")
-		if strings.Contains(line, "dev ppp0") {
+		log.Info(line)
+		if strings.Contains(line, searchString) {
 			routes = append(routes, line)
 		}
 	}
@@ -140,16 +157,26 @@ func ppp0Routes() []string {
 
 func reroute() error {
 	time.Sleep(time.Second)
-	gw := gateway()
-	log.Info("Got gateway ", gw)
+	gw, gwIsDev, device, err := gateway()
+	if err != nil {
+		return err
+	}
+	log.Info("Got gateway ", gw, "via", device)
+
+	var arg string
+	if gwIsDev {
+		arg = "dev"
+	} else {
+		arg = "gw"
+	}
 
 	log.Infof("Removing new default route %v", gw)
-	if err := cmd.Sudo("route", "del", "default", "gw", gw); err != nil {
+	if err := cmd.Sudo("route", "del", "default", arg, gw); err != nil {
 		return err
 	}
 
-	// Delete routes that ppp0 currently has
-	for _, route := range ppp0Routes() {
+	// Delete routes that the default gateway
+	for _, route := range deviceRoutes(device) {
 		log.Debug(route)
 		log.Info("Delete ", route)
 		args := []string{"route", "del"}
@@ -166,7 +193,7 @@ func reroute() error {
 
 	for _, ip := range toRoute {
 		log.Infof("Routing %v via VPN", ip)
-		if err := cmd.Sudo("route", "add", ip, "gw", gw); err != nil {
+		if err := cmd.Sudo("route", "add", ip, arg, gw); err != nil {
 			return err
 		}
 	}
@@ -178,11 +205,16 @@ func connect() error {
 	log.Info("Connecting")
 	cmd.Sudo("echo", "sudo please")
 
-	vpn, err := start()
-	if err != nil {
-		return err
+	var vpn *exec.Cmd
+	var err error
+
+	if !noVPN {
+		vpn, err = start()
+		if err != nil {
+			return err
+		}
+		defer vpn.Process.Kill()
 	}
-	defer vpn.Process.Kill()
 
 	log.Info("Connected")
 	if !noReroute {
@@ -196,8 +228,10 @@ func connect() error {
 		return err
 	}
 
-	if err := vpn.Wait(); err != nil {
-		return err
+	if !noVPN {
+		if err := vpn.Wait(); err != nil {
+			return err
+		}
 	}
 
 	return nil

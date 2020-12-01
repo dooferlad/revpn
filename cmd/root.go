@@ -27,6 +27,7 @@ import (
 var cfgFile string
 var noReroute bool
 var debug bool
+var noVPN bool
 
 // RootCmd represents the base command when called without any subcommands
 var RootCmd = &cobra.Command{
@@ -58,6 +59,7 @@ func init() {
 	// will be global for your application.
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.revpn.yaml)")
 	RootCmd.Flags().BoolVarP(&noReroute, "no-reroute", "n", false, "don't change routes")
+	RootCmd.Flags().BoolVarP(&noVPN, "no-start-vpn", "x", false, "don't start the vpn client")
 	RootCmd.Flags().BoolVarP(&debug, "debug", "", false, "debug logging")
 }
 
